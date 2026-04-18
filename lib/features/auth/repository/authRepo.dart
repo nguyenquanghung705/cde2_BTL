@@ -1,0 +1,114 @@
+// ignore_for_file: file_names, invalid_return_type_for_catch_error
+
+import 'package:financy_ui/app/services/Server/dio_client.dart';
+import 'package:financy_ui/features/Users/models/userModels.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:hive_flutter/adapters.dart';
+import 'package:financy_ui/app/services/Local/settings_service.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+
+class Authrepo {
+  Future<UserCredential> signInWithGoogle() async {
+    final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) {
+      throw Exception('Google sign-in aborted by user');
+    }
+    final GoogleSignInAuthentication googleAuth =
+        await googleUser.authentication;
+
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    return await FirebaseAuth.instance.signInWithCredential(credential);
+  }
+
+  Future<void> loginWithGoogle(String tokenID) async {
+    // fetch token
+    final data = {"idToken": tokenID};
+    final res = await ApiService()
+        .post('/auth/login', data: data)
+        .catchError(
+          (e) => {throw Exception('Login with Google failed: ${e.toString()}')},
+        );
+    if (res.statusCode != 200) {
+      throw Exception('Login with Google failed: ${res.statusMessage}');
+    }
+
+    // Get tokens and user data from response
+    final accessToken = res.data['accessToken'];
+    final refreshToken = res.data['refreshToken'];
+    final userData = res.data['user']; // User data is now in the login response
+
+    //save tokens to local storage
+    Hive.box('jwt').put('accessToken', accessToken);
+    Hive.box('jwt').put('refreshToken', refreshToken);
+    ApiService().setToken(accessToken);
+
+    // Nếu user có picture là link, tải về app data và lưu path local
+    String? localPicturePath;
+    if (userData['picture'] != null &&
+        userData['picture'].toString().startsWith('http')) {
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        final fileName =
+            'google_profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final savePath = '${dir.path}/$fileName';
+        await Dio().download(userData['picture'], savePath);
+        localPicturePath = savePath;
+      } catch (e) {
+        localPicturePath = null;
+      }
+    }
+
+    // Lưu user vào Hive, thay picture = local path nếu có
+    final userJson = Map<String, dynamic>.from(userData);
+    if (localPicturePath != null) {
+      userJson['photo'] = localPicturePath;
+    }
+    await Hive.box<UserModel>(
+      'userBox',
+    ).put('currentUser', UserModel.fromJson(userJson));
+    await SettingsService.setAppState(true);
+    await SettingsService.setAuthMode('google');
+  }
+
+  //get user data from local storage
+  Future<UserModel?> getCurrentUser() async {
+    final boxUser = Hive.box<UserModel>('userBox').get('currentUser');
+    // Nếu picture là local path, trả về luôn, nếu là link thì không cần tải lại
+    return boxUser;
+  }
+
+  //login with no account (guest mode)
+  Future<void> loginWithNoAccount() async {
+    await SettingsService.setAppState(true);
+    await SettingsService.setAuthMode('guest');
+  }
+
+  // Logout for Google-authenticated users
+  Future<void> logout() async {
+    try {
+      // Sign out from Firebase and Google
+      await FirebaseAuth.instance.signOut();
+      await GoogleSignIn().signOut();
+    } catch (_) {
+      // swallow sign-out errors
+    }
+
+    // Clear tokens and user data
+    final jwtBox = Hive.box('jwt');
+    jwtBox.delete('accessToken');
+    jwtBox.delete('refreshToken');
+
+    // Keep local user and data intact (do not delete currentUser or lastSync)
+
+    // Keep app state as logged-in (guest) so app stays on main screen
+    await SettingsService.setAppState(true);
+    await SettingsService.setAuthMode('guest');
+    await SettingsService.setJustLoggedOut(true);
+  }
+}
