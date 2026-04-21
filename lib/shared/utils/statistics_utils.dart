@@ -1,5 +1,7 @@
 import 'package:financy_ui/features/transactions/models/transactionsModels.dart';
 import 'package:financy_ui/features/Categories/models/categoriesModels.dart';
+import 'package:financy_ui/shared/utils/color_utils.dart';
+import 'package:flutter/material.dart';
 import 'package:financy_ui/core/constants/icons.dart';
 
 class StatisticsUtils {
@@ -163,15 +165,19 @@ class StatisticsUtils {
     return sorted.take(limit).toList();
   }
 
-  /// Format số tiền thành string
+  /// Format VND with dot thousands separators — "1500000" -> "1.500.000".
+  /// Consistent across dashboards, charts and list rows; no K/M compaction.
   static String formatAmount(double amount) {
-    if (amount >= 1000000) {
-      return '${(amount / 1000000).toStringAsFixed(1)}M';
-    } else if (amount >= 1000) {
-      return '${(amount / 1000).toStringAsFixed(1)}K';
-    } else {
-      return amount.toStringAsFixed(0);
+    final negative = amount < 0;
+    final digits = amount.abs().toStringAsFixed(0);
+    final buf = StringBuffer();
+    final len = digits.length;
+    for (var i = 0; i < len; i++) {
+      final fromEnd = len - i;
+      buf.write(digits[i]);
+      if (fromEnd > 1 && fromEnd % 3 == 1) buf.write('.');
     }
+    return negative ? '-${buf.toString()}' : buf.toString();
   }
 
   /// Lấy màu cho category
@@ -182,6 +188,18 @@ class StatisticsUtils {
       orElse: () => categories.first,
     );
     return category.color;
+  }
+
+  /// Parsed [Color] for a category so chart sections and legend labels share
+  /// one source of truth. Falls back to a distinct-but-deterministic hue
+  /// when a custom category name isn't in the defaults.
+  static Color colorFor(String categoryName, TransactionType type) {
+    final raw = getCategoryColor(categoryName, type);
+    final parsed = ColorUtils.parseColor(raw);
+    if (parsed != null) return parsed;
+    // Deterministic fallback: hash the name into the HSV wheel.
+    final h = categoryName.hashCode.abs() % 360;
+    return HSVColor.fromAHSV(1, h.toDouble(), 0.65, 0.85).toColor();
   }
 
   /// Lấy icon cho category

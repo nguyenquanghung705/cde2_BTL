@@ -1,5 +1,8 @@
 // ignore_for_file: file_names, invalid_return_type_for_catch_error
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:financy_ui/app/services/Server/dio_client.dart';
 import 'package:financy_ui/features/Users/models/userModels.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -83,31 +86,106 @@ class Authrepo {
     return boxUser;
   }
 
+  // ---- Email/password (local) ----
+  // NOTE: credentials are stored locally in Hive box 'authCredentials' and
+  // hashed with SHA-256. This is adequate for an offline demo. A real backend
+  // must validate/hash server-side; do not ship plain-text local auth in prod.
+
+  String _hashPassword(String password) =>
+      sha256.convert(utf8.encode(password)).toString();
+
+  Future<void> registerWithEmail({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final normalized = email.trim().toLowerCase();
+    final creds = Hive.box('authCredentials');
+    if (creds.containsKey(normalized)) {
+      throw Exception('Email đã được đăng ký');
+    }
+
+    final now = DateTime.now();
+    final userId = 'local_${now.millisecondsSinceEpoch}';
+    final user = UserModel(
+      id: userId,
+      uid: userId,
+      name: name.trim(),
+      email: normalized,
+      picture: '',
+      dateOfBirth: now,
+      createdAt: now,
+    );
+
+    await creds.put(normalized, {
+      'passwordHash': _hashPassword(password),
+      'userId': userId,
+      'name': user.name,
+    });
+    await Hive.box<UserModel>('userBox').put('currentUser', user);
+    await SettingsService.setAppState(true);
+    await SettingsService.setAuthMode('email');
+  }
+
+  Future<void> loginWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    final normalized = email.trim().toLowerCase();
+    final creds = Hive.box('authCredentials');
+    final record = creds.get(normalized);
+    if (record == null) {
+      throw Exception('Tài khoản không tồn tại');
+    }
+    if (record['passwordHash'] != _hashPassword(password)) {
+      throw Exception('Mật khẩu không đúng');
+    }
+
+    final userBox = Hive.box<UserModel>('userBox');
+    var user = userBox.get('currentUser');
+    if (user == null || user.email != normalized) {
+      user = UserModel(
+        id: record['userId'] ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
+        uid: record['userId'] ?? '',
+        name: record['name'] ?? '',
+        email: normalized,
+        picture: '',
+        dateOfBirth: DateTime.now(),
+        createdAt: DateTime.now(),
+      );
+      await userBox.put('currentUser', user);
+    }
+    await SettingsService.setAppState(true);
+    await SettingsService.setAuthMode('email');
+  }
+
   //login with no account (guest mode)
   Future<void> loginWithNoAccount() async {
     await SettingsService.setAppState(true);
     await SettingsService.setAuthMode('guest');
   }
 
-  // Logout for Google-authenticated users
+  // Logout — clears auth state and returns user to the login screen.
+  // Works for any auth mode (google / email / guest). Local user data (the
+  // UserModel in 'userBox' and transactions) is preserved so signing back
+  // in picks up where the user left off.
   Future<void> logout() async {
+    // Sign out from Firebase/Google if applicable. These can throw when
+    // Firebase isn't configured (stub options) — swallow errors.
     try {
-      // Sign out from Firebase and Google
       await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+    try {
       await GoogleSignIn().signOut();
-    } catch (_) {
-      // swallow sign-out errors
-    }
+    } catch (_) {}
 
-    // Clear tokens and user data
+    // Clear JWT tokens.
     final jwtBox = Hive.box('jwt');
-    jwtBox.delete('accessToken');
-    jwtBox.delete('refreshToken');
+    await jwtBox.delete('accessToken');
+    await jwtBox.delete('refreshToken');
 
-    // Keep local user and data intact (do not delete currentUser or lastSync)
-
-    // Keep app state as logged-in (guest) so app stays on main screen
-    await SettingsService.setAppState(true);
+    // Flip app state to logged-out so MainApp routes to Login.
+    await SettingsService.setAppState(false);
     await SettingsService.setAuthMode('guest');
     await SettingsService.setJustLoggedOut(true);
   }

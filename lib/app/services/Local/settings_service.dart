@@ -41,6 +41,7 @@ class SettingsService {
 
   static bool isGoogleLogin() => getAuthMode() == 'google';
   static bool isGuestLogin() => getAuthMode() == 'guest';
+  static bool isEmailLogin() => getAuthMode() == 'email';
 
   // Convenience: sync is enabled only for Google login
   static bool isSyncEnabled() => isGoogleLogin();

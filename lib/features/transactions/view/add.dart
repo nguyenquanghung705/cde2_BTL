@@ -2,19 +2,25 @@
 
 import 'dart:developer';
 
+import 'package:financy_ui/app/services/Local/budget_db.dart';
 import 'package:financy_ui/features/Account/cubit/manageMoneyCubit.dart';
 import 'package:financy_ui/features/Account/models/money_source.dart';
+import 'package:financy_ui/features/Categories/cubit/CategoriesCubit.dart';
 import 'package:financy_ui/features/transactions/Cubit/transactionCubit.dart';
+import 'package:financy_ui/shared/utils/currency.dart';
+import 'package:financy_ui/shared/utils/statistics_utils.dart';
 import 'package:financy_ui/features/Users/Cubit/userCubit.dart';
 import 'package:financy_ui/features/transactions/Cubit/transctionState.dart';
 import 'package:financy_ui/features/transactions/models/transactionsModels.dart';
 import 'package:financy_ui/shared/utils/generateID.dart';
+import 'package:financy_ui/shared/utils/thousands_formatter.dart';
 import 'package:financy_ui/shared/widgets/resultDialogAnimation.dart';
 import 'package:financy_ui/shared/utils/mappingIcon.dart';
 import 'package:financy_ui/core/constants/icons.dart';
 import 'package:financy_ui/features/Categories/models/categoriesModels.dart';
 import 'package:financy_ui/shared/utils/color_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
 import 'package:financy_ui/core/constants/colors.dart';
@@ -82,7 +88,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             editingTransaction!.type == TransactionType.income ? 0 : 1;
 
         // Set amount
-        amountController.text = editingTransaction!.amount.toString();
+        amountController.text = VndThousandsFormatter.format(
+          editingTransaction!.amount.toInt().toString(),
+        );
 
         // Set category
         selectedCategory = editingTransaction!.categoriesId;
@@ -112,6 +120,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     }
   }
 
+  VoidCallback? _detachAmountFormatting;
+
   @override
   void initState() {
     listAccounts =
@@ -121,6 +131,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     // Luôn khởi tạo với expense (chi tiêu) khi vào màn hình
     selectedTransactionType = 1;
     availableCategories = defaultExpenseCategories;
+
+    // Live VND dot-separator formatting via a controller listener — keeps
+    // the engine's InputFormatter pipeline free of rewrites, which was the
+    // source of the "typed 111 becomes 11123" bug on Chrome.
+    _detachAmountFormatting =
+        VndThousandsFormatter.attach(amountController);
 
     // Check if we're in editing mode
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -152,6 +168,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     });
 
     super.initState();
+  }
+
+  @override
+  void dispose() {
+    _detachAmountFormatting?.call();
+    super.dispose();
   }
 
   @override
@@ -231,13 +253,25 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                         label: _localText((l) => l.transactionAmount),
                         child: TextField(
                           controller: amountController,
-                          keyboardType: TextInputType.number,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: false,
+                            signed: false,
+                          ),
+                          // Suppress Chrome spellcheck / autocomplete which can
+                          // re-fire input events on a formatted numeric field.
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          // Only allow digits at the engine level — dots are
+                          // re-inserted *after* commit by the controller
+                          // listener installed in initState.
+                          inputFormatters: vndInputFormatters,
                           style: theme.textTheme.titleLarge?.copyWith(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
                           decoration: InputDecoration(
                             hintText: '0',
+                            suffixText: '₫',
                             border: InputBorder.none,
                             hintStyle: theme.textTheme.bodyMedium?.copyWith(
                               color: AppColors.textGrey,
@@ -665,21 +699,83 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     }
   }
 
+  void _showInsufficientBalanceDialog({
+    required double amount,
+    required double balance,
+    required String accountName,
+  }) {
+    final theme = Theme.of(context);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.error_outline,
+            color: theme.colorScheme.error, size: 40),
+        title: const Text(
+          'Lưu giao dịch thất bại',
+          textAlign: TextAlign.center,
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Số dư trong ví không đủ để thực hiện giao dịch này.',
+            ),
+            const SizedBox(height: 12),
+            Text('Ví: $accountName'),
+            Text('Số dư hiện có: ${StatisticsUtils.formatAmount(balance)} VND'),
+            Text('Số tiền chi: ${StatisticsUtils.formatAmount(amount)} VND'),
+            const SizedBox(height: 6),
+            Text(
+              'Thiếu: ${StatisticsUtils.formatAmount(amount - balance)} VND',
+              style: TextStyle(
+                color: theme.colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _validate(double amount, MoneySource account) {
     if (account.isActive != true) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Selected account is inactive'),
-          backgroundColor: Theme.of(context).primaryColor,
+          content: Text('Tài khoản đã bị vô hiệu hoá'),
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
       return false;
     }
-    if (amount <= 0) {
+    // Negative amounts are never allowed — surface a clear Vietnamese
+    // message that distinguishes income vs expense, since income should
+    // logically never be negative.
+    if (amount < 0) {
+      final isIncome = selectedTransactionType == 0;
+      final msg = isIncome
+          ? 'Không thành công: Thu nhập không được là số âm'
+          : 'Không thành công: Số tiền không được là số âm';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Amount must be greater than 0'),
-          backgroundColor: Theme.of(context).primaryColor,
+          content: Text(msg),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return false;
+    }
+    if (amount == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Số tiền phải lớn hơn 0'),
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
       return false;
@@ -701,11 +797,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     // Only validate balance for expense transactions
     if (selectedTransactionType == 1 && amount > effectiveBalance) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Insufficient balance in account'),
-          backgroundColor: Theme.of(context).primaryColor,
-        ),
+      _showInsufficientBalanceDialog(
+        amount: amount,
+        balance: effectiveBalance,
+        accountName: account.name,
       );
       return false;
     }
@@ -750,6 +845,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
               : TransactionType.expense;
       final uid = context.read<UserCubit>().state.user?.uid ?? '';
 
+      // Budget guard: for expenses, ask the user to confirm before saving a
+      // transaction that would push them past the category's monthly limit.
+      if (type == TransactionType.expense) {
+        final proceed = await _confirmBudgetOverride(amount, date);
+        if (!proceed) return;
+      }
+
       // Create or update transaction
       if (isEditing && editingTransaction != null) {
         await _updateExistingTransaction(amount, date, account, type);
@@ -767,6 +869,97 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     }
   }
 
+  /// Ask the user whether to proceed when the new transaction would push
+  /// the selected category past its configured monthly limit. Returns true
+  /// if there's no limit, the limit isn't exceeded, or the user confirms.
+  Future<bool> _confirmBudgetOverride(
+    double addedAmount,
+    DateTime date,
+  ) async {
+    final catState = context.read<Categoriescubit>().state;
+    final matches =
+        catState.categoriesExpense.where((c) => c.name == selectedCategory);
+    if (matches.isEmpty) return true;
+    final category = matches.first;
+
+    final budget = await BudgetDb.instance.getByCategory(category.id);
+    if (budget == null || budget.limit <= 0) return true;
+
+    final txState = context.read<TransactionCubit>().state;
+    double spentThisMonth = 0;
+    txState.transactionsList.forEach((_, txs) {
+      for (final t in txs) {
+        if (t.type == TransactionType.expense &&
+            t.categoriesId == selectedCategory &&
+            t.transactionDate != null &&
+            t.transactionDate!.month == date.month &&
+            t.transactionDate!.year == date.year) {
+          // Skip the original row when editing so we don't double-count it.
+          if (isEditing && editingTransaction != null &&
+              t.id == editingTransaction!.id) {
+            continue;
+          }
+          spentThisMonth += t.amount;
+        }
+      }
+    });
+    final projected = spentThisMonth + addedAmount;
+    if (projected <= budget.limit) return true;
+
+    if (!mounted) return true;
+    final theme = Theme.of(context);
+    final over = projected - budget.limit;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: theme.colorScheme.error),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Vượt hạn mức chi')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Danh mục: ${category.name}'),
+            const SizedBox(height: 6),
+            Text('Hạn mức: ${CurrencyFormat.vnd(budget.limit)}'),
+            Text(
+              'Đã chi tháng này: ${CurrencyFormat.vnd(spentThisMonth)}',
+            ),
+            Text('Giao dịch mới: ${CurrencyFormat.vnd(addedAmount)}'),
+            const Divider(height: 20),
+            Text(
+              'Sau khi lưu sẽ vượt ${CurrencyFormat.vnd(over)}',
+              style: TextStyle(
+                color: theme.colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Bạn có muốn tiếp tục lưu giao dịch này không?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Vẫn lưu'),
+          ),
+        ],
+      ),
+    );
+    return confirm ?? false;
+  }
+
   // Helper method to validate and parse input
   Future<ValidationResult> _validateAndParseInput() async {
     // Validate amount
@@ -777,15 +970,15 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       return ValidationResult(isValid: false);
     }
 
-    double amount;
-    try {
-      amount = double.parse(amountController.text.trim());
-    } catch (e) {
+    // Strip the thousand dots inserted by VndThousandsFormatter before parsing.
+    final parsed = VndThousandsFormatter.parse(amountController.text);
+    if (parsed == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Invalid amount format')));
+      ).showSnackBar(const SnackBar(content: Text('Số tiền không hợp lệ')));
       return ValidationResult(isValid: false);
     }
+    final amount = parsed;
 
     // Parse date
     DateTime date;

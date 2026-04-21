@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously
 
+import 'package:financy_ui/app/services/Local/activity_logger.dart';
 import 'package:financy_ui/features/auth/cubits/authCubit.dart';
 import 'package:financy_ui/features/auth/views/nameInputDialog.dart';
 import 'package:financy_ui/features/auth/cubits/authState.dart';
@@ -20,11 +21,6 @@ class _LoginState extends State<Login> {
   int? savedMonth;
   int? savedYear;
 
-  void loginGoogle() async {
-    // Trigger login; navigation will be handled by BlocListener on success
-    await context.read<Authcubit>().login();
-  }
-
   Future<void> _showInputDialog() async {
     showDialog(
       context: context,
@@ -34,6 +30,7 @@ class _LoginState extends State<Login> {
   }
 
   void loginNoAccount() async {
+    await ActivityLogger.log('login_guest_open');
     await _showInputDialog();
   }
 
@@ -48,9 +45,11 @@ class _LoginState extends State<Login> {
           return;
         }
         if (state.authStatus == AuthStatus.authenticated) {
+          ActivityLogger.log('login_success');
           Navigator.pushReplacementNamed(context, '/');
         } else if (state.authStatus == AuthStatus.error) {
           final message = state.errorMessage ?? 'Authentication failed';
+          ActivityLogger.log('login_error', data: {'message': message});
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(message),
@@ -61,21 +60,41 @@ class _LoginState extends State<Login> {
       },
       child: Scaffold(
         resizeToAvoidBottomInset: false,
-        body: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Spacer(),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(15),
-                child: Image.asset(
-                  'assets/icon/rounded-in-photoretrica.png',
-                  width: MediaQuery.of(context).size.width * 0.4,
-                  height: MediaQuery.of(context).size.width * 0.4,
-                  fit: BoxFit.cover,
-                ),
-              ),
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final dpr = MediaQuery.of(context).devicePixelRatio;
+              final shortSide = constraints.maxWidth < constraints.maxHeight
+                  ? constraints.maxWidth
+                  : constraints.maxHeight;
+              final logoSize = (shortSide * 0.35).clamp(120.0, 220.0);
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 40,
+                      maxWidth: 440,
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const SizedBox(height: 24),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(15),
+                            child: Image.asset(
+                              'assets/icon/rounded-in-photoretrica.png',
+                              width: logoSize,
+                              height: logoSize,
+                              fit: BoxFit.cover,
+                              filterQuality: FilterQuality.high,
+                              cacheWidth: (logoSize * dpr * 2).round(),
+                              cacheHeight: (logoSize * dpr * 2).round(),
+                            ),
+                          ),
               const SizedBox(height: 20),
               Text(
                 appLocal?.hello ?? 'Hello',
@@ -100,9 +119,18 @@ class _LoginState extends State<Login> {
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
-                height: MediaQuery.of(context).size.height * 0.06,
-                child: OutlinedButton(
-                  onPressed: loginGoogle,
+                height: 52,
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      Navigator.pushNamed(context, '/emailLogin'),
+                  icon: const Icon(Icons.email_outlined),
+                  label: Text(
+                    'Đăng nhập bằng Email',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   style: OutlinedButton.styleFrom(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
@@ -112,40 +140,12 @@ class _LoginState extends State<Login> {
                       width: 2,
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Image.asset(
-                        'assets/image/google.png',
-                        width: 20,
-                        height: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        appLocal?.continue_with_google ??
-                            'Continue with Google',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
-              const SizedBox(height: 20),
-              Text(
-                appLocal?.or ?? 'Or',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
-                height: MediaQuery.of(context).size.height * 0.06,
+                height: 52,
                 child: OutlinedButton(
                   onPressed: loginNoAccount,
                   style: OutlinedButton.styleFrom(
@@ -172,9 +172,29 @@ class _LoginState extends State<Login> {
                   ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Chưa có tài khoản? ',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.pushNamed(context, '/register'),
+                    child: Text(
+                      'Đăng ký ngay',
+                      style: TextStyle(
+                        color: theme.primaryColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 25),
+                padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Text(
                   appLocal?.agree_terms ??
                       'I agree to the terms and conditions',
@@ -186,7 +206,13 @@ class _LoginState extends State<Login> {
                   textAlign: TextAlign.center,
                 ),
               ),
-            ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),

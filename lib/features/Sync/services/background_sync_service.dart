@@ -12,6 +12,7 @@ import 'package:financy_ui/features/transactions/repo/transactionsRepo.dart';
 import 'package:hive/hive.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:financy_ui/app/services/Local/settings_service.dart';
+import 'package:financy_ui/app/services/Local/sync_history_db.dart';
 
 /// Message types for communication between isolates
 class SyncMessage {
@@ -103,6 +104,7 @@ class BackgroundSyncService {
       '[BackgroundSync] User is logged in with Google - proceeding with sync',
     );
     _isSyncing = true;
+    final syncStartedAt = DateTime.now();
 
     try {
       debugLog('[BackgroundSync] Starting in main thread...');
@@ -295,6 +297,14 @@ class BackgroundSyncService {
               await Hive.box('settings').put('lastSync', currentTime);
 
               debugLog('[BackgroundSync] All data marked as synced');
+              await SyncHistoryDb.instance.record(SyncHistoryEntry(
+                startedAt: syncStartedAt,
+                durationMs:
+                    DateTime.now().difference(syncStartedAt).inMilliseconds,
+                success: true,
+                itemCount: totalItems,
+                attempts: 1,
+              ));
               _progressController?.add(
                 SyncProgress(
                   stage: 'complete',
@@ -305,6 +315,15 @@ class BackgroundSyncService {
               break;
             case 'error':
               debugLog('[BackgroundSync] Error: ${message['data']}');
+              await SyncHistoryDb.instance.record(SyncHistoryEntry(
+                startedAt: syncStartedAt,
+                durationMs:
+                    DateTime.now().difference(syncStartedAt).inMilliseconds,
+                success: false,
+                itemCount: totalItems,
+                attempts: 1,
+                errorMessage: message['data']?.toString(),
+              ));
               _progressController?.addError(message['data'] ?? 'Sync failed');
               _cleanup();
               break;
@@ -359,18 +378,60 @@ class BackgroundSyncService {
         },
       });
 
-      // Prepare FormData
-      final formData = FormData.fromMap({'data': jsonEncode(syncDataObject)});
-
-      // Make API call
-      final response = await dio.post(
-        '/sync',
-        data: formData,
-        options: Options(
-          headers: {'Authorization': 'Bearer $accessToken'},
-          // Don't set Content-Type, let Dio handle it for FormData
-        ),
-      );
+      // Retry with exponential backoff: 0s, 2s, 4s, 8s (max 4 attempts)
+      const maxAttempts = 4;
+      Response? response;
+      DioException? lastError;
+      for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0) {
+          final waitSeconds = 1 << attempt; // 2, 4, 8
+          debugLog(
+            '[BackgroundSync] Retry attempt $attempt after ${waitSeconds}s',
+          );
+          sendPort.send({
+            'type': 'progress',
+            'data': {
+              'stage': 'uploading',
+              'current': 0,
+              'total': totalItems,
+              'message':
+                  'Retrying in ${waitSeconds}s (attempt ${attempt + 1}/$maxAttempts)...',
+            },
+          });
+          await Future.delayed(Duration(seconds: waitSeconds));
+        }
+        try {
+          final formData =
+              FormData.fromMap({'data': jsonEncode(syncDataObject)});
+          response = await dio.post(
+            '/sync',
+            data: formData,
+            options:
+                Options(headers: {'Authorization': 'Bearer $accessToken'}),
+          );
+          break;
+        } on DioException catch (e) {
+          lastError = e;
+          final status = e.response?.statusCode ?? 0;
+          final retryable = status == 0 ||
+              status >= 500 ||
+              e.type == DioExceptionType.connectionTimeout ||
+              e.type == DioExceptionType.receiveTimeout ||
+              e.type == DioExceptionType.sendTimeout ||
+              e.type == DioExceptionType.connectionError;
+          debugLog(
+            '[BackgroundSync] Attempt ${attempt + 1} failed: status=$status retryable=$retryable',
+          );
+          if (!retryable) rethrow;
+        }
+      }
+      if (response == null) {
+        throw lastError ??
+            DioException(
+              requestOptions: RequestOptions(path: '/sync'),
+              message: 'Sync failed after $maxAttempts attempts',
+            );
+      }
 
       debugLog('[BackgroundSync] Server response: ${response.statusCode}');
 

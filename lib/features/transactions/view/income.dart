@@ -12,6 +12,7 @@ import 'package:financy_ui/features/transactions/models/transactionsModels.dart'
 import 'package:financy_ui/features/Categories/cubit/CategoriesCubit.dart';
 import 'package:financy_ui/features/Categories/cubit/CategoriesState.dart';
 import 'package:financy_ui/features/Categories/models/categoriesModels.dart';
+import 'package:financy_ui/shared/utils/color_utils.dart';
 import 'package:financy_ui/shared/utils/statistics_utils.dart';
 import 'package:financy_ui/shared/utils/mappingIcon.dart';
 
@@ -518,7 +519,7 @@ class _IncomeState extends State<Income> {
     final maxValue = chartData
         .map((e) => e.value)
         .reduce((a, b) => a > b ? a : b);
-    return maxValue > 0 ? maxValue * 1.2 : 100;
+    return maxValue > 0 ? maxValue * 1.35 : 100;
   }
 
   double _calculateChartWidth() {
@@ -804,6 +805,8 @@ class _IncomeState extends State<Income> {
               vertical: 8,
             ),
             tooltipMargin: 8,
+            fitInsideHorizontally: true,
+            fitInsideVertically: true,
             getTooltipColor:
                 (group) => theme.colorScheme.surface.withOpacity(0.95),
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
@@ -948,27 +951,18 @@ class _IncomeState extends State<Income> {
       ];
     }
 
-    final colors = [
-      Colors.green,
-      Colors.blue,
-      Colors.purple,
-      Colors.orange,
-      Colors.teal,
-    ];
-
-    return pieChartData.asMap().entries.map((entry) {
-      final index = entry.key;
-      final data = entry.value;
+    return pieChartData.map((data) {
+      final color = StatisticsUtils.colorFor(data.key, TransactionType.income);
       return PieChartSectionData(
-        color: colors[index % colors.length],
+        color: color,
         value: data.value,
         title: '${data.value.toStringAsFixed(1)}%',
         titleStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
           fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          color: ColorUtils.bestOnColor(color),
         ),
-        radius: 40,
+        radius: 48,
       );
     }).toList();
   }
@@ -983,20 +977,15 @@ class _IncomeState extends State<Income> {
       ];
     }
 
-    final colors = [
-      Colors.green,
-      Colors.blue,
-      Colors.purple,
-      Colors.orange,
-      Colors.teal,
-    ];
-
-    return pieChartData.asMap().entries.map((entry) {
-      final index = entry.key;
-      final data = entry.value;
+    return pieChartData.map((data) {
+      final color = StatisticsUtils.colorFor(data.key, TransactionType.income);
       return Column(
         children: [
-          _buildLegendItem(colors[index % colors.length], data.key),
+          _buildLegendItem(
+            color,
+            '${data.key}  •  ${data.value.toStringAsFixed(1)}%',
+            labelColor: color,
+          ),
           const SizedBox(height: 8),
         ],
       );
@@ -1372,7 +1361,7 @@ class _IncomeState extends State<Income> {
     );
   }
 
-  Widget _buildLegendItem(Color color, String text) {
+  Widget _buildLegendItem(Color color, String text, {Color? labelColor}) {
     final theme = Theme.of(context);
     return Row(
       children: [
@@ -1386,7 +1375,8 @@ class _IncomeState extends State<Income> {
           child: Text(
             text,
             style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
+              color: labelColor,
             ),
             overflow: TextOverflow.ellipsis,
           ),

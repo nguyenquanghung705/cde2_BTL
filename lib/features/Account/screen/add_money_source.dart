@@ -1,12 +1,15 @@
 // ignore_for_file: deprecated_member_use, use_build_context_synchronously
 
+import 'package:financy_ui/app/services/Local/account_numbers_store.dart';
 import 'package:financy_ui/features/Account/cubit/manageMoneyCubit.dart';
 import 'package:financy_ui/features/Account/cubit/manageMoneyState.dart';
 import 'package:financy_ui/features/Account/models/money_source.dart';
 import 'package:financy_ui/features/Users/Cubit/userCubit.dart';
 import 'package:financy_ui/shared/utils/color_utils.dart';
 import 'package:financy_ui/shared/utils/generateID.dart';
+import 'package:financy_ui/shared/utils/thousands_formatter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
 import '../../../core/constants/colors.dart';
@@ -22,7 +25,16 @@ class AddMoneySourceScreen extends StatefulWidget {
 class _AddMoneySourceScreenState extends State<AddMoneySourceScreen> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController balanceController = TextEditingController();
+  final TextEditingController accountNumberController =
+      TextEditingController();
   final TextEditingController descriptionController = TextEditingController();
+  VoidCallback? _detachBalance;
+
+  @override
+  void initState() {
+    super.initState();
+    _detachBalance = VndThousandsFormatter.attach(balanceController);
+  }
 
   String selectedType = 'cash';
   String selectedCurrency = 'vnd';
@@ -386,15 +398,66 @@ class _AddMoneySourceScreenState extends State<AddMoneySourceScreen> {
                 TextField(
                   controller: balanceController,
                   keyboardType: TextInputType.number,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  inputFormatters: vndInputFormatters,
                   style: TextStyle(color: textColor),
                   decoration: InputDecoration(
                     prefixIcon: Icon(
                       Icons.attach_money,
                       color: textColor.withOpacity(0.7),
                     ),
+                    suffixText: '₫',
                     hintText: localizations.initialBalance,
                     filled: true,
                     hintStyle: TextStyle(color: hintColor),
+                    fillColor: backgroundColor,
+                    contentPadding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                      horizontal: 16,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: borderColor),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: borderColor),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: focusedBorderColor,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Số tài khoản (tuỳ chọn)',
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: textColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: accountNumberController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(24),
+                  ],
+                  style: TextStyle(color: textColor),
+                  decoration: InputDecoration(
+                    prefixIcon: Icon(
+                      Icons.credit_card,
+                      color: textColor.withOpacity(0.7),
+                    ),
+                    hintText: 'VD: 0123456789',
+                    hintStyle: TextStyle(color: hintColor),
+                    filled: true,
                     fillColor: backgroundColor,
                     contentPadding: const EdgeInsets.symmetric(
                       vertical: 16,
@@ -519,8 +582,10 @@ class _AddMoneySourceScreenState extends State<AddMoneySourceScreen> {
 
   @override
   void dispose() {
+    _detachBalance?.call();
     nameController.dispose();
     balanceController.dispose();
+    accountNumberController.dispose();
     descriptionController.dispose();
     super.dispose();
   }
@@ -615,7 +680,7 @@ class _AddMoneySourceScreenState extends State<AddMoneySourceScreen> {
       id: GenerateID.newID(),
       uid: context.read<UserCubit>().state.user?.uid ?? '',
       name: nameController.text,
-      balance: double.tryParse(balanceController.text) ?? 0.0,
+      balance: VndThousandsFormatter.parse(balanceController.text) ?? 0.0,
       type: _typeFromString(selectedType),
       currency: _currencyFromString(selectedCurrency),
       color: ColorUtils.colorToHex(selectedColor),
@@ -627,5 +692,8 @@ class _AddMoneySourceScreenState extends State<AddMoneySourceScreen> {
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );
     context.read<ManageMoneyCubit>().createAccount(source);
+    // Persist the optional account number in the side-table keyed by the
+    // newly-generated id.
+    AccountNumbersStore.set(source.id!, accountNumberController.text);
   }
 }

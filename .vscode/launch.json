@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Financy Web (port 5050)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "args": ["--web-port=5050", "--web-hostname=localhost"]
+    },
+    {
+      "name": "Financy Web Profile",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "flutterMode": "profile",
+      "args": ["--web-port=5050"]
+    },
+    {
+      "name": "Financy Windows",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "windows"
+    }
+  ]
+}

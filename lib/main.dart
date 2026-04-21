@@ -1,6 +1,4 @@
 // ignore_for_file: must_be_immutable
-import 'package:flutter/foundation.dart' hide Category;
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:financy_ui/app/cubit/themeCubit.dart';
 import 'package:financy_ui/app/services/Local/notifications.dart';
 import 'package:financy_ui/features/Account/models/money_source.dart';
@@ -23,9 +21,30 @@ import 'package:financy_ui/features/Users/models/userModels.dart';
 import 'package:financy_ui/features/transactions/models/transactionsModels.dart';
 import 'package:financy_ui/features/notification/cubit/notificationCubit.dart';
 import 'package:financy_ui/features/notification/models/notificationModel.dart';
+import 'package:financy_ui/features/Budget/cubit/budget_cubit.dart';
+import 'package:financy_ui/features/Budget/view/budget_screen.dart';
+import 'package:financy_ui/features/Transfer/cubit/transfer_cubit.dart';
+import 'package:financy_ui/features/Transfer/view/transfer_screen.dart';
+import 'package:financy_ui/app/services/Local/transfers_db.dart';
+import 'package:financy_ui/app/services/Local/recurring_db.dart';
+import 'package:financy_ui/features/Recurring/cubit/recurring_cubit.dart';
+import 'package:financy_ui/features/Recurring/view/recurring_screen.dart';
+import 'package:financy_ui/app/services/Local/export_history_db.dart';
+import 'package:financy_ui/features/Export/view/export_screen.dart';
+import 'package:financy_ui/features/auth/biometric_gate.dart';
+import 'package:financy_ui/features/Setting/biometric_settings_screen.dart';
+import 'package:financy_ui/app/services/Local/savings_goals_db.dart';
+import 'package:financy_ui/features/Goals/cubit/goals_cubit.dart';
+import 'package:financy_ui/features/Goals/view/goals_screen.dart';
+import 'package:financy_ui/app/services/Local/exchange_rates_db.dart';
+import 'package:financy_ui/features/Currency/view/currency_screen.dart';
+import 'package:financy_ui/features/Ocr/view/ocr_screen.dart';
+import 'package:financy_ui/app/services/Local/activity_log_db.dart';
+import 'package:financy_ui/app/services/Local/activity_logger.dart';
+import 'package:financy_ui/features/Setting/activity_log_screen.dart';
 import 'package:financy_ui/features/ai_assistant/cubit/ai_settings_cubit.dart';
 import 'package:financy_ui/features/ai_assistant/models/AI_settings.dart';
-//import 'package:financy_ui/firebase_options.dart';
+import 'package:financy_ui/firebase_options.dart';
 import 'package:financy_ui/features/Setting/interfaceSettings.dart';
 import 'package:financy_ui/l10n/l10n.dart';
 import 'package:financy_ui/features/Setting/languageSettings.dart';
@@ -36,9 +55,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:financy_ui/app/services/Local/budget_db.dart';
+import 'package:financy_ui/app/services/Local/sync_history_db.dart';
 import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'features/auth/views/login.dart';
+import 'features/auth/views/emailLogin.dart';
+import 'features/auth/views/register.dart';
 import 'app/theme/app_theme.dart';
 import 'core/constants/colors.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
@@ -48,13 +73,12 @@ import 'package:financy_ui/app/services/Local/settings_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Notification: chỉ chạy trên mobile/desktop, bỏ qua web
+  // initialize notification
+
   if (!kIsWeb) {
     NotiService().initNotification();
     await NotiService().requestNotificationPermission();
   }
-
-  // Hive: web và non-web khởi tạo khác nhau
   if (kIsWeb) {
     await Hive.initFlutter();
   } else {
@@ -73,15 +97,30 @@ void main() async {
   Hive.registerAdapter(NotificationModelAdapter());
   Hive.registerAdapter(AiSettingsAdapter());
 
-  await dotenv.load(fileName: ".env");
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (_) {
+    // .env missing — fall back to default baseUrl below.
+  }
   await Hive.openBox('settings');
   await Hive.openBox('jwt');
+  await Hive.openBox('authCredentials');
+  await Hive.openBox('accountNumbers');
+  await BudgetDb.instance.init();
+  await SyncHistoryDb.instance.init();
+  await TransfersDb.instance.init();
+  await RecurringDb.instance.init();
+  await ExportHistoryDb.instance.init();
+  await SavingsGoalsDb.instance.init();
+  await ExchangeRatesDb.instance.init();
+  await ActivityLogDb.instance.init();
+  await ActivityLogger.log('app_start');
 
   // Store baseUrl for isolate access
   final baseUrl = dotenv.env['URL_DB'] ?? 'http://10.0.2.2:2310/api';
   await Hive.box('settings').put('baseUrl', baseUrl);
 
-  // Initialize local storage
+  // Initialize local storage for MoneySource
   await Hive.openBox<MoneySource>('moneySourceBox');
   await Hive.openBox<UserModel>('userBox');
   await Hive.openBox<Category>('categoryBox');
@@ -89,11 +128,17 @@ void main() async {
   await Hive.openBox<NotificationModel>('notificationSettings');
   await Hive.openBox<AiSettings>('aiSettingsBox');
 
-  // Firebase tạm tắt
-  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  runApp(const MyApp());
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // Firebase not configured (stub options) — email/password login (local)
+    // still works. Run `flutterfire configure` to enable Google Sign-In.
+  }
+  runApp(MyApp());
 }
+
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -104,17 +149,18 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   @override
   void initState() {
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!kIsWeb) {
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         await NotiService().scheduleDailyNotifications(
-          title: AppLocalizations.of(context)?.titleNotification ?? 'Thông báo',
+          title:
+              AppLocalizations.of(context)?.titleNotification ?? 'Thông báo',
           body:
-          AppLocalizations.of(context)?.bodyNotification ??
+              AppLocalizations.of(context)?.bodyNotification ??
               'Hôm nay bạn đã chi tiêu bao nhiêu?',
         );
         await NotiService().saveNotificationSettings();
-      }
-    });
+      });
+    }
     super.initState();
   }
 
@@ -130,10 +176,17 @@ class _MyAppState extends State<MyApp> {
         BlocProvider(create: (_) => Categoriescubit()),
         BlocProvider(create: (_) => NotificationCubit()),
         BlocProvider(create: (_) => AiSettingsCubit()..loadSettings()),
+        BlocProvider(create: (_) => BudgetCubit()),
+        BlocProvider(create: (_) => TransferCubit()),
+        BlocProvider(create: (_) => RecurringCubit()..runNow()),
+        BlocProvider(create: (_) => GoalsCubit()),
       ],
       child: BlocBuilder<ThemeCubit, ThemeState>(
         builder: (context, state) {
           return MaterialApp(
+            navigatorObservers: [ActivityNavigatorObserver()],
+            builder: (context, child) =>
+                BiometricGate(child: child ?? const SizedBox.shrink()),
             title: 'Expense Tracker',
             supportedLocales: L10n.all,
             localizationsDelegates: [
@@ -174,6 +227,8 @@ class _MyAppState extends State<MyApp> {
               '/addMoneySource': (context) => const AddMoneySourceScreen(),
               '/add': (context) => const AddTransactionScreen(),
               '/login': (context) => Login(),
+              '/emailLogin': (context) => const EmailLogin(),
+              '/register': (context) => const Register(),
               '/expenseTracker': (context) => ExpenseTrackerScreen(),
               '/manageAccount': (context) => AccountMoneyScreen(),
               '/interfaceSettings': (context) => InterfaceSettings(),
@@ -183,6 +238,15 @@ class _MyAppState extends State<MyApp> {
               '/notificationSettings':
                   (context) => NotificationSettingsScreen(),
               '/dataSync': (context) => DataSyncScreen(),
+              '/budget': (context) => const BudgetScreen(),
+              '/transfer': (context) => const TransferScreen(),
+              '/recurring': (context) => const RecurringScreen(),
+              '/export': (context) => const ExportScreen(),
+              '/biometric': (context) => const BiometricSettingsScreen(),
+              '/goals': (context) => const GoalsScreen(),
+              '/currency': (context) => const CurrencyScreen(),
+              '/ocr': (context) => const OcrScreen(),
+              '/activityLog': (context) => const ActivityLogScreen(),
 
               // Add other routes here
             },

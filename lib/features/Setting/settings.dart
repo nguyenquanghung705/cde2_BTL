@@ -21,24 +21,39 @@ class Settings extends StatelessWidget {
   }
 
   Future<void> _logout(BuildContext context) async {
+    final appLocal = AppLocalizations.of(context);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(appLocal?.logout ?? 'Đăng xuất'),
+        content: const Text('Bạn có chắc chắn muốn đăng xuất?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(appLocal?.logout ?? 'Đăng xuất'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
     await Authrepo().logout();
-    if (context.mounted) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        '/expenseTracker',
-        (route) => false,
-      );
-      final appLocal = AppLocalizations.of(context);
-      final theme = Theme.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(appLocal?.loggedOut ?? 'Logged out'),
-          backgroundColor: theme.primaryColor,
-        ),
-      );
-      // Clear one-time flag since we've already shown the snackbar here
-      await SettingsService.setJustLoggedOut(false);
-    }
+    if (!context.mounted) return;
+
+    // Route back to the login screen and drop every screen in between.
+    Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+    final theme = Theme.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(appLocal?.loggedOut ?? 'Đã đăng xuất'),
+        backgroundColor: theme.primaryColor,
+      ),
+    );
+    await SettingsService.setJustLoggedOut(false);
   }
 
   @override
@@ -104,6 +119,87 @@ class Settings extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _buildMenuItem(
+              icon: Icons.pie_chart,
+              title: 'Ngân sách',
+              iconColor: Colors.purple,
+              onTap: () {
+                Navigator.pushNamed(context, '/budget');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.swap_horiz,
+              title: 'Chuyển khoản giữa ví',
+              iconColor: Colors.indigo,
+              onTap: () {
+                Navigator.pushNamed(context, '/transfer');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.event_repeat,
+              title: 'Giao dịch định kỳ',
+              iconColor: Colors.deepPurple,
+              onTap: () {
+                Navigator.pushNamed(context, '/recurring');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.file_download,
+              title: 'Xuất CSV',
+              iconColor: Colors.brown,
+              onTap: () {
+                Navigator.pushNamed(context, '/export');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.fingerprint,
+              title: 'Khóa sinh trắc học',
+              iconColor: Colors.pink,
+              onTap: () {
+                Navigator.pushNamed(context, '/biometric');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.savings,
+              title: 'Mục tiêu tiết kiệm',
+              iconColor: Colors.amber,
+              onTap: () {
+                Navigator.pushNamed(context, '/goals');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.currency_exchange,
+              title: 'Tỷ giá & Tiền tệ',
+              iconColor: Colors.cyan,
+              onTap: () {
+                Navigator.pushNamed(context, '/currency');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.document_scanner,
+              title: 'Quét hóa đơn (OCR)',
+              iconColor: Colors.blueGrey,
+              onTap: () {
+                Navigator.pushNamed(context, '/ocr');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
+              icon: Icons.history,
+              title: 'Nhật ký hoạt động',
+              iconColor: Colors.grey,
+              onTap: () {
+                Navigator.pushNamed(context, '/activityLog');
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuItem(
               icon: Icons.notifications,
               title: _localText(context, (l) => l.notification),
               iconColor: Colors.orange,
@@ -134,13 +230,12 @@ class Settings extends StatelessWidget {
               },
             ),
             const SizedBox(height: 12),
-            if (SettingsService.isGoogleLogin())
-              _buildMenuItem(
-                icon: Icons.logout,
-                title: _localText(context, (l) => l.logout),
-                iconColor: Colors.red,
-                onTap: () => _logout(context),
-              ),
+            _buildMenuItem(
+              icon: Icons.logout,
+              title: _localText(context, (l) => l.logout),
+              iconColor: Colors.red,
+              onTap: () => _logout(context),
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -212,8 +307,7 @@ class Settings extends StatelessWidget {
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.of(ctx).pop();
-                        Navigator.pushNamed(context, '/dataSync');
-                      //  Navigator.pushNamed(context, '/dataSyncScreen');
+                        Navigator.pushNamed(context, '/dataSyncScreen');
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: theme.colorScheme.primary,

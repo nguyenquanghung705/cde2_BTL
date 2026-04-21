@@ -3,6 +3,7 @@
 import 'package:financy_ui/features/Account/cubit/manageMoneyCubit.dart';
 import 'package:financy_ui/features/Users/Cubit/userCubit.dart';
 import 'package:financy_ui/shared/widgets/resultDialogAnimation.dart';
+import 'package:financy_ui/shared/utils/thousands_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
@@ -26,13 +27,18 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
   late TextEditingController descriptionController;
   late Color selectedColor;
   late bool isActive;
+  VoidCallback? _detachBalance;
 
   @override
   void initState() {
     super.initState();
     nameController = TextEditingController(text: widget.account?.name ?? '');
     balanceController = TextEditingController(
-      text: widget.account?.balance.toString(),
+      text: widget.account == null
+          ? ''
+          : VndThousandsFormatter.format(
+              widget.account!.balance.toStringAsFixed(0),
+            ),
     );
     descriptionController = TextEditingController(
       text: widget.account?.description ?? '',
@@ -41,10 +47,12 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
         ColorUtils.parseColor(widget.account?.color ?? '') ??
         AppColors.primaryBlue;
     isActive = widget.account?.isActive ?? false;
+    _detachBalance = VndThousandsFormatter.attach(balanceController);
   }
 
   @override
   void dispose() {
+    _detachBalance?.call();
     nameController.dispose();
     balanceController.dispose();
     descriptionController.dispose();
@@ -104,7 +112,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
         id: widget.account?.id ?? '',
         uid: context.read<UserCubit>().state.user?.uid ?? '',
         name: nameController.text,
-        balance: double.tryParse(balanceController.text) ?? 0.0,
+        balance: VndThousandsFormatter.parse(balanceController.text) ?? 0.0,
         type: widget.account?.type ?? TypeMoney.cash,
         currency: widget.account?.currency ?? CurrencyType.vnd,
         description: descriptionController.text,
@@ -252,8 +260,12 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
                 TextField(
                   controller: balanceController,
                   keyboardType: TextInputType.number,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  inputFormatters: vndInputFormatters,
                   decoration: InputDecoration(
                     prefixIcon: const Icon(Icons.attach_money),
+                    suffixText: '₫',
                     hintText:
                         localizations?.initialBalance ?? 'Initial Balance',
                     hintStyle: const TextStyle(color: Colors.black54),

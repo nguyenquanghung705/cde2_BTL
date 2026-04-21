@@ -1,13 +1,17 @@
 // ignore_for_file: deprecated_member_use, use_build_context_synchronously, library_private_types_in_public_api, non_constant_identifier_names
 
+import 'package:financy_ui/app/services/Local/budget_db.dart';
 import 'package:financy_ui/core/constants/colors.dart';
 import 'package:financy_ui/features/Categories/cubit/CategoriesCubit.dart';
 import 'package:financy_ui/features/Categories/models/categoriesModels.dart';
 import 'package:financy_ui/features/Users/Cubit/userCubit.dart';
 import 'package:financy_ui/shared/utils/color_utils.dart';
+import 'package:financy_ui/shared/utils/currency.dart';
 import 'package:financy_ui/shared/utils/mappingIcon.dart';
 import 'package:financy_ui/shared/utils/generateID.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:financy_ui/shared/utils/thousands_formatter.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -28,6 +32,9 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
   Color? _selectedColor;
   bool _isLoading = false;
 
+  final TextEditingController _limitController = TextEditingController();
+  VoidCallback? _detachLimit;
+
   // Available icons grouped by category
   final Map<String, List<IconData>> _iconCategories =
       IconMapping.groupIconsByCategory();
@@ -39,6 +46,7 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
     super.initState();
     // _initializeForm();
     _availableColors = List<Color>.from(AppColors.listIconColors);
+    _detachLimit = VndThousandsFormatter.attach(_limitController);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final args = ModalRoute.of(context)?.settings.arguments;
@@ -64,6 +72,18 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
         _availableColors.insert(0, _selectedColor!);
       }
     });
+
+    // Load existing budget for edit mode.
+    if (category?.id != null) {
+      BudgetDb.instance.getByCategory(category!.id).then((b) {
+        if (b != null && mounted) {
+          setState(() {
+            _limitController.text =
+                VndThousandsFormatter.format(b.limit.toStringAsFixed(0));
+          });
+        }
+      });
+    }
   }
 
   @override
@@ -133,6 +153,14 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
               SizedBox(height: 12),
               _buildColorSelector(),
               SizedBox(height: 24),
+
+              // Budget limit — only meaningful for expense categories.
+              if (_selectedType == 'expense') ...[
+                _buildSectionTitle('Hạn mức chi (VND)'),
+                SizedBox(height: 12),
+                _buildLimitField(),
+                SizedBox(height: 24),
+              ],
 
               SizedBox(height: 12),
               // Delete Button (chỉ hiển thị khi edit)
@@ -513,6 +541,54 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
     );
   }
 
+  Widget _buildLimitField() {
+    final theme = Theme.of(context);
+    final parsed = VndThousandsFormatter.parse(_limitController.text.trim());
+    final preview = (parsed != null && parsed > 0)
+        ? CurrencyFormat.vnd(parsed)
+        : 'Để trống = không giới hạn';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: _limitController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: false),
+          autocorrect: false,
+          enableSuggestions: false,
+          inputFormatters: vndInputFormatters,
+          decoration: InputDecoration(
+            hintText: 'VD: 2.000.000',
+            prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
+            suffixText: '₫',
+            filled: true,
+            fillColor: theme.cardColor,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.dividerColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.dividerColor),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide:
+                  BorderSide(color: theme.colorScheme.primary, width: 2),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          preview,
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+        ),
+      ],
+    );
+  }
+
   Widget _buildDeleteButton() {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
@@ -588,6 +664,22 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
       await context.read<Categoriescubit>().addCategory(new_category);
     }
 
+    // Persist (or clear) the category budget. Only meaningful for expense.
+    if (_selectedType == 'expense') {
+      final raw = _limitController.text.trim();
+      final limit = VndThousandsFormatter.parse(raw);
+      if (limit != null && limit > 0) {
+        await BudgetDb.instance.upsert(
+          Budget(categoryId: new_category.id, limit: limit),
+        );
+      } else {
+        await BudgetDb.instance.delete(new_category.id);
+      }
+    } else {
+      // Switching to income removes any leftover budget.
+      await BudgetDb.instance.delete(new_category.id);
+    }
+
     setState(() => _isLoading = false);
 
     // Return result
@@ -646,7 +738,9 @@ class _AddEditCategoryScreenState extends State<AddEditCategoryScreen> {
 
   @override
   void dispose() {
+    _detachLimit?.call();
     _nameController.dispose();
+    _limitController.dispose();
     super.dispose();
   }
 }

@@ -13,6 +13,8 @@ import 'package:financy_ui/features/transactions/models/transactionsModels.dart'
 import 'package:financy_ui/shared/utils/localText.dart';
 import 'package:financy_ui/shared/utils/mappingIcon.dart';
 import 'package:financy_ui/shared/utils/money_source_utils.dart';
+import 'package:financy_ui/shared/utils/statistics_utils.dart';
+import 'package:financy_ui/app/services/Local/account_numbers_store.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/material.dart';
 
@@ -25,18 +27,9 @@ class Wallet extends StatefulWidget {
 
 class _WalletState extends State<Wallet> {
   String _formatAmount(num amount) {
-    if (amount % 1 == 0) {
-      // Là số nguyên
-      return amount.toInt().toString().replaceAllMapped(
-        RegExp(r'\B(?=(\d{3})+(?!\d))'),
-        (match) => ',',
-      );
-    } else {
-      // Có phần thập phân
-      return amount
-          .toStringAsFixed(2)
-          .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (match) => ',');
-    }
+    // Unified VND formatting: always use "." as thousands separator,
+    // no decimals for integer VND, and no K/M compaction.
+    return StatisticsUtils.formatAmount(amount.toDouble());
   }
 
   List<Transactionsmodels> transactionsList(
@@ -612,6 +605,52 @@ class BalanceCard extends StatelessWidget {
                 ),
                 SizedBox(height: 16),
 
+                // Balance + account number
+                if (currentAccount != null) ...[
+                  Builder(builder: (_) {
+                    final acc = currentAccount!;
+                    final masked = AccountNumbersStore.masked(acc.id);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Số dư',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: onBrand,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '${StatisticsUtils.formatAmount(acc.balance)} VND',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            color: onBrand,
+                            fontWeight: FontWeight.bold,
+                            shadows: brandBackground != null
+                                ? [
+                                    Shadow(
+                                      color: Colors.black.withOpacity(0.6),
+                                      blurRadius: 4,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'STK: ${masked ?? '—'}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: onBrand,
+                            fontFamily: 'monospace',
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                        SizedBox(height: 16),
+                      ],
+                    );
+                  }),
+                ],
                 // Income and Expense Row
                 Row(
                   children: [
@@ -696,7 +735,7 @@ class BalanceCard extends StatelessWidget {
                             ),
                             SizedBox(height: 6),
                             Text(
-                              '+${totalIncome.toStringAsFixed(0)} VND',
+                              '+${StatisticsUtils.formatAmount(totalIncome)} VND',
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: onBrand,
                                 fontWeight: FontWeight.bold,
@@ -801,7 +840,7 @@ class BalanceCard extends StatelessWidget {
                             ),
                             SizedBox(height: 6),
                             Text(
-                              '-${totalExpense.toStringAsFixed(0)} VND',
+                              '-${StatisticsUtils.formatAmount(totalExpense)} VND',
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: onBrand,
                                 fontWeight: FontWeight.bold,

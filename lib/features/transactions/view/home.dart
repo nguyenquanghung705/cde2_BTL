@@ -7,6 +7,7 @@ import 'package:financy_ui/features/transactions/Cubit/transactionCubit.dart';
 import 'package:financy_ui/features/Users/Cubit/userCubit.dart';
 import 'package:financy_ui/features/Users/Cubit/userState.dart';
 import 'package:financy_ui/features/Account/cubit/manageMoneyCubit.dart';
+import 'package:financy_ui/features/Account/cubit/manageMoneyState.dart';
 import 'package:financy_ui/features/Users/models/userModels.dart';
 import 'package:financy_ui/features/transactions/Cubit/transctionState.dart';
 import 'package:financy_ui/features/transactions/models/transactionsModels.dart';
@@ -20,7 +21,13 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/colors.dart';
 import '../../../shared/utils/color_utils.dart';
 import '../../../shared/utils/mappingIcon.dart';
+import 'package:financy_ui/app/services/Local/account_numbers_store.dart';
+import 'package:financy_ui/app/services/Local/budget_status.dart';
+import 'package:financy_ui/features/Categories/cubit/CategoriesCubit.dart';
+import 'package:financy_ui/features/Categories/cubit/CategoriesState.dart';
 import 'package:financy_ui/l10n/app_localizations.dart';
+import 'package:financy_ui/shared/utils/currency.dart';
+import 'package:financy_ui/shared/utils/statistics_utils.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 
 class Home extends StatefulWidget {
@@ -35,6 +42,8 @@ class _HomeState extends State<Home> {
   void initState() {
     print(Hive.box('settings').toMap());
     context.read<TransactionCubit>().fetchTransactionsByDate();
+    context.read<ManageMoneyCubit>().getAllAccount();
+    context.read<Categoriescubit>().loadCategories();
     super.initState();
   }
 
@@ -388,15 +397,19 @@ class _HomeState extends State<Home> {
             sideTitles: SideTitles(
               showTitles: true,
               getTitlesWidget: (value, meta) {
+                // value is scaled by the chart's divisor (10_000). Re-project
+                // back to raw VND and show full dots (no "K" compaction) so
+                // the axis matches the rest of the app.
+                final raw = value * 10000;
                 return Text(
-                  '${(value * 10).toInt()}K', // Convert back to display format
+                  StatisticsUtils.formatAmount(raw),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: AppColors.textGrey,
                     fontSize: 10,
                   ),
                 );
               },
-              reservedSize: 40,
+              reservedSize: 72,
               interval: _getMaxY(monthlyData, divisor) / 5,
             ),
           ),
@@ -520,16 +533,252 @@ class _HomeState extends State<Home> {
     return appLocal != null ? getter(appLocal) : '';
   }
 
+  Widget _buildWalletBalanceCard(BuildContext context) {
+    final theme = Theme.of(context);
+    return BlocBuilder<ManageMoneyCubit, ManageMoneyState>(
+      builder: (context, state) {
+        final accounts =
+            (state.listAccounts ?? const <MoneySource>[]).toList();
+        final activeVnd = accounts
+            .where((a) => a.isActive == true && a.currency == CurrencyType.vnd);
+        final total = activeVnd.fold<double>(0, (sum, a) => sum + a.balance);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  theme.colorScheme.primary,
+                  theme.colorScheme.primary.withOpacity(0.75),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: theme.colorScheme.primary.withOpacity(0.25),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.account_balance_wallet,
+                      color: theme.colorScheme.onPrimary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Số dư trong ví',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onPrimary.withOpacity(0.9),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  CurrencyFormat.vnd(total),
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    color: theme.colorScheme.onPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 28,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${activeVnd.length} tài khoản hoạt động',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onPrimary.withOpacity(0.85),
+                  ),
+                ),
+                if (activeVnd.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Divider(
+                    color: theme.colorScheme.onPrimary.withOpacity(0.25),
+                    height: 1,
+                  ),
+                  const SizedBox(height: 10),
+                  ...activeVnd.map((a) => _buildAccountRow(context, a)),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAccountRow(BuildContext context, MoneySource account) {
+    final theme = Theme.of(context);
+    final onPrimary = theme.colorScheme.onPrimary;
+    final masked = AccountNumbersStore.masked(account.id);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: onPrimary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              account.icon ?? Icons.account_balance_wallet_outlined,
+              color: onPrimary,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  account.name,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: onPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (masked != null)
+                  Text(
+                    masked,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: onPrimary.withOpacity(0.8),
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            CurrencyFormat.vnd(account.balance),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: onPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBudgetAlertBanner(BuildContext context) {
+    final theme = Theme.of(context);
+    final now = DateTime.now();
+    return BlocBuilder<TransactionCubit, TransactionState>(
+      builder: (context, txState) {
+        return BlocBuilder<Categoriescubit, CategoriesState>(
+          builder: (context, catState) {
+            if (txState.status != TransactionStateStatus.loaded ||
+                catState.categoriesExpense.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return FutureBuilder<List<CategoryBudgetStatus>>(
+              future: BudgetStatusCalc.forMonth(
+                expenseCategories: catState.categoriesExpense,
+                transactionsByDate: txState.transactionsList,
+                year: now.year,
+                month: now.month,
+              ),
+              builder: (context, snap) {
+                if (!snap.hasData) return const SizedBox.shrink();
+                final over = snap.data!.where((s) => s.over).toList();
+                final nearing = snap.data!.where((s) => s.nearing).toList();
+                if (over.isEmpty && nearing.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                final isOver = over.isNotEmpty;
+                final color =
+                    isOver ? theme.colorScheme.error : Colors.orange.shade700;
+                final items = isOver ? over : nearing;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      border: Border.all(color: color.withOpacity(0.4)),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              isOver
+                                  ? Icons.error_outline
+                                  : Icons.warning_amber_rounded,
+                              color: color,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isOver
+                                  ? 'Đã vượt hạn mức tháng này'
+                                  : 'Sắp chạm hạn mức',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: color,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        ...items.take(3).map(
+                              (s) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Text(
+                                  '• ${s.category.name}: '
+                                  '${CurrencyFormat.vnd(s.spent)} / '
+                                  '${CurrencyFormat.vnd(s.limit)}'
+                                  '${s.over ? " (vượt ${CurrencyFormat.vnd(s.overBy)})" : ""}',
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ),
+                            ),
+                        if (items.length > 3)
+                          Text(
+                            'và ${items.length - 3} danh mục khác',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontStyle: FontStyle.italic,
+                              color: theme.hintColor,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   String _formatAmount(double amount, {bool isUSD = false}) {
     if (isUSD) {
-      // Format USD amount with comma separators and 2 decimal places
       final formatter = NumberFormat('#,##0.00', 'en_US');
       return '\$${formatter.format(amount)}';
-    } else {
-      // Format VND amount with comma separators and no decimal places
-      final formatter = NumberFormat('#,###', 'vi_VN');
-      return '${formatter.format(amount.toInt())} ₫';
     }
+    // Use app-wide VND formatter so every screen renders the same way
+    // (e.g. "1.500.000 ₫" — dot thousands, ₫ suffix).
+    return CurrencyFormat.vnd(amount);
   }
 
   @override
@@ -663,6 +912,12 @@ class _HomeState extends State<Home> {
                 ],
               ),
             ),
+
+            // Wallet balance card
+            _buildWalletBalanceCard(context),
+
+            // Budget-overrun banner (current month)
+            _buildBudgetAlertBanner(context),
 
             // Chart Section
             BlocBuilder<TransactionCubit, TransactionState>(
@@ -968,7 +1223,7 @@ class _HomeState extends State<Home> {
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.of(ctx).pop();
-                        Navigator.pushNamed(context, '/dataSync');
+                        Navigator.pushNamed(context, '/dataSyncScreen');
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: theme.colorScheme.primary,

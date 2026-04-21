@@ -198,5 +198,3 @@ graph TB
 - Giai đoạn 2: ngân hàng, báo cáo nâng cao
 
 
-#   c d e 2 _ B T L  
- 

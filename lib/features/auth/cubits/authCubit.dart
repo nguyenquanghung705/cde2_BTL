@@ -31,4 +31,40 @@ class Authcubit extends Cubit<Authstate> {
       emit(Authstate.error(e.toString()));
     }
   }
+
+  Future<void> registerWithEmail({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    try {
+      await _authrepo.registerWithEmail(
+        name: name,
+        email: email,
+        password: password,
+      );
+      emit(Authstate.authenticated());
+    } catch (e) {
+      log(e.toString());
+      emit(Authstate.error(_readableError(e)));
+    }
+  }
+
+  Future<void> loginWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      await _authrepo.loginWithEmail(email: email, password: password);
+      emit(Authstate.authenticated());
+    } catch (e) {
+      log(e.toString());
+      emit(Authstate.error(_readableError(e)));
+    }
+  }
+
+  String _readableError(Object e) {
+    final msg = e.toString();
+    return msg.startsWith('Exception: ') ? msg.substring(11) : msg;
+  }
 }
